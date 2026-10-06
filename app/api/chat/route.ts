@@ -2,12 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAiAnswer } from "@/lib/ai";
 import { searchMaterials } from "@/lib/search";
 
-const LIMIT = 3;
-const COOKIE = "buhexpert_demo_queries_v2";
+const requestCache = new Map<string, unknown>();
 
-export async function GET(request: NextRequest) {
-  const used = Math.max(0, Number.parseInt(request.cookies.get(COOKIE)?.value || "0", 10) || 0);
-  return NextResponse.json({ remainingQueries: Math.max(0, LIMIT - used), demoMode: !process.env.AI_API_KEY });
+export async function GET() {
+  return NextResponse.json({ remainingQueries: Number.MAX_SAFE_INTEGER, demoMode: !process.env.AI_API_KEY });
 }
 
 export async function POST(request: NextRequest) {
@@ -18,19 +16,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Некорректный формат запроса." }, { status: 400 });
   }
   const question = typeof body === "object" && body && "question" in body ? String(body.question).trim() : "";
+  const idempotencyKey = typeof body === "object" && body && "idempotencyKey" in body ? String(body.idempotencyKey) : "";
+  const history = typeof body === "object" && body && "history" in body && Array.isArray(body.history)
+    ? body.history.map((item) => String(item).slice(0, 600)) : [];
   if (question.length < 4 || question.length > 600) {
     return NextResponse.json({ error: "Введите вопрос длиной от 4 до 600 символов." }, { status: 400 });
   }
-  const used = Math.max(0, Number.parseInt(request.cookies.get(COOKIE)?.value || "0", 10) || 0);
-  if (used >= LIMIT) {
-    return NextResponse.json({ error: "Бесплатные вопросы закончились.", code: "LIMIT_REACHED", remainingQueries: 0 }, { status: 429 });
+  if (!idempotencyKey || idempotencyKey.length > 120) {
+    return NextResponse.json({ error: "Не удалось подтвердить уникальность запроса." }, { status: 400 });
   }
-  const remainingQueries = LIMIT - used - 1;
+  const cached = requestCache.get(idempotencyKey);
+  if (cached) {
+    return NextResponse.json(cached);
+  }
   try {
-    const answer = await createAiAnswer(question, searchMaterials(question), remainingQueries);
-    const response = NextResponse.json(answer);
-    response.cookies.set(COOKIE, String(used + 1), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 60 * 60 * 24 * 30, path: "/" });
-    return response;
+    const answer = await createAiAnswer(question, searchMaterials(question), Number.MAX_SAFE_INTEGER, history);
+    requestCache.set(idempotencyKey, answer);
+    if (requestCache.size > 100) requestCache.delete(requestCache.keys().next().value as string);
+    return NextResponse.json(answer);
   } catch (error) {
     console.error("Chat request failed", error);
     return NextResponse.json({ error: "Не удалось получить ответ. Попробуйте ещё раз." }, { status: 502 });
@@ -38,7 +41,5 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE() {
-  const response = NextResponse.json({ remainingQueries: LIMIT });
-  response.cookies.set(COOKIE, "0", { httpOnly: true, sameSite: "lax", path: "/" });
-  return response;
+  return NextResponse.json({ remainingQueries: Number.MAX_SAFE_INTEGER });
 }

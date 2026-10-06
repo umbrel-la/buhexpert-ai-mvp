@@ -33,3 +33,10 @@ export interface ChatResponse {
   demoMode: boolean;
   insufficient?: boolean;
 }
+
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  answer?: ChatResponse;
+};

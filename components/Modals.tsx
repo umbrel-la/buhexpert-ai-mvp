@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { trackEvent } from "@/lib/analytics";
+import { trackDemoEvent, trackEvent } from "@/lib/analytics";
 
 function ModalShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   useEffect(() => {
@@ -43,4 +43,40 @@ export function ConsultationModal({ onClose }: { onClose: () => void }) {
       <button className="primary-btn modal-button submit">Отправить заявку</button>
     </form>
   </>}</ModalShell>;
+}
+
+export function AuthModal({ mode, onClose, onAuthenticated, onSwitch }: { mode: "login" | "register"; onClose: () => void; onAuthenticated: (kind: "login" | "register") => void; onSwitch: (mode: "login" | "register") => void }) {
+  const [step, setStep] = useState<"email" | "code">("email");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+
+  const sendCode = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
+    trackDemoEvent(mode === "register" ? "h01_demo_registration_start" : "h01_demo_login_start");
+    setStep("code");
+  };
+  const confirmCode = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
+    trackDemoEvent(mode === "register" ? "h01_demo_registration_success" : "h01_demo_existing_login");
+    onAuthenticated(mode);
+  };
+
+  const title = mode === "register" ? "Создайте аккаунт" : "Войдите в аккаунт";
+  return <ModalShell title={title} onClose={onClose}>
+    {step === "email" ? <form onSubmit={sendCode}>
+      <p className="sub">{mode === "register" ? "Сохраните вопрос и получите первый ответ после регистрации." : "Продолжите работу с сохранённым вопросом."}</p>
+      <p className="demo-note"><b>Демонстрация email → код.</b> Письмо не отправляется, настоящий аккаунт не создаётся. Пароль не нужен.</p>
+      <label className="form-field">Email<input autoFocus type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="name@example.com" /></label>
+      <button className="primary-btn modal-button" type="submit">Получить код</button>
+      <p className="fine">{mode === "register" ? <>Уже есть аккаунт? <button className="auth-switch" type="button" onClick={() => onSwitch("login")}>Войти</button></> : <>Нет аккаунта? <button className="auth-switch" type="button" onClick={() => onSwitch("register")}>Зарегистрироваться</button></>}</p>
+    </form> : <form onSubmit={confirmCode}>
+      <p className="sub">Введите любой шестизначный код для продолжения демонстрации.</p>
+      <p className="demo-note">Код не отправлялся на почту и не сохраняется. Это только интерфейс для проверки воронки.</p>
+      <label className="form-field">Код из письма<input autoFocus inputMode="numeric" pattern="[0-9]{6}" minLength={6} maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))} required placeholder="000000" aria-describedby="auth-code-help" /></label>
+      <small id="auth-code-help">Для прототипа подойдёт любой код из 6 цифр.</small>
+      <div className="modal-actions"><button className="primary-btn modal-button" type="submit">Продолжить</button><button className="outline modal-button" type="button" onClick={() => setStep("email")}>Назад</button></div>
+    </form>}
+  </ModalShell>;
 }

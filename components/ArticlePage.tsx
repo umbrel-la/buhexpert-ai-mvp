@@ -63,8 +63,8 @@ function ArticleAi({ compact, initialQuestion, onSubscribe, onConsult }: { compa
     <div className="article-ai-form"><input value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={keydown} disabled={loading || !remaining} placeholder="Например: как принять к учету основное средство?" aria-label="Вопрос AI по статье" />
       <button className="article-ai-button" onClick={() => submit()} disabled={loading || !remaining || question.trim().length < 4}>{loading ? "Ищу…" : compact ? "Задать вопрос AI" : "Спросить AI"}</button></div>
     <div className="article-ai-chips">{(compact ? suggested.slice(0, 2) : suggested).map((item) => <button key={item} onClick={() => { setQuestion(item); submit(item); }} disabled={loading || !remaining}>{item}</button>)}</div>
-    <small>Осталось бесплатных вопросов: {remaining}. Ответы доступны по демонстрационной подборке материалов. {remaining === 0 && <button className="article-reset-limit" onClick={resetLimit}>Сбросить 3 вопроса</button>}</small>
-    {(asked || error) && <div className="article-ai-result">{error && <p className="article-ai-error">{error}</p>}{answer && <><Link className="personalized-link" href="/personalized-answers">Открыть персональный ответ</Link><AiAnswer question={asked} answer={answer} onReset={reset} onSubscribe={() => { trackEvent("article_full_access_click", { article_slug: slug }); onSubscribe("article_answer"); }} onConsult={() => onConsult("article_answer")} /></>}</div>}
+    <small>Тестовый режим: ответы доступны по демонстрационной подборке материалов. {remaining === 0 && <button className="article-reset-limit" onClick={resetLimit}>Сбросить лимит демонстрации</button>}</small>
+    {(asked || error) && <div className="article-ai-result">{error && <p className="article-ai-error">{error}</p>}{answer && <><Link className="personalized-link" href="/personalized-answers">Открыть персональный ответ</Link><AiAnswer question={asked} answer={answer} onSubscribe={() => { trackEvent("article_full_access_click", { article_slug: slug }); onSubscribe("article_answer"); }} onConsult={() => onConsult("article_answer")} /></>}</div>}
   </section>;
 }
 

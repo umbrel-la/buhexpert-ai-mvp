@@ -1,73 +1,82 @@
 "use client";
 
-import { KeyboardEvent, useEffect, useState } from "react";
-import type { ChatResponse } from "@/types";
+import { KeyboardEvent, useEffect, useRef, useState } from "react";
+import type { ChatMessage, ChatResponse } from "@/types";
 import { trackEvent } from "@/lib/analytics";
 import { AiAnswer } from "./AiAnswer";
 
 const suggestions = ["Как провести лизинг в 1С?", "Как начислить НДФЛ?", "Как оформить увольнение?", "Как отразить расходы на подписку?"];
+const safetyNote = "ИИ-помощник работает в тестовом режиме и может ошибаться. Перед применением проверяйте ответ по актуальным источникам; в сложных случаях уточните у эксперта.";
 
-export function AiAssistant({ onSubscribe, onConsult }: { onSubscribe: (location: string) => void; onConsult: (location: string) => void }) {
+function newRequestId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+}
+
+export function AiAssistant({ onSubscribe, onConsult, isAuthenticated, onAuthRequired }: { onSubscribe: (location: string) => void; onConsult: (location: string) => void; isAuthenticated: boolean; onAuthRequired: () => void }) {
   const [question, setQuestion] = useState("");
-  const [asked, setAsked] = useState("");
-  const [answer, setAnswer] = useState<ChatResponse | null>(null);
+  const [followUpQuestion, setFollowUpQuestion] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
-  const [remaining, setRemaining] = useState(3);
   const [demoMode, setDemoMode] = useState(true);
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState<{ question: string; requestId: string }>();
+  const inFlight = useRef<string | null>(null);
 
   useEffect(() => {
-    trackEvent("ai_assistant_view");
-    fetch("/api/chat").then((res) => res.json()).then((data) => { setRemaining(data.remainingQueries); setDemoMode(data.demoMode); }).catch(() => {});
-    const syncQuota = (event: Event) => setRemaining((event as CustomEvent<number>).detail ?? 3);
-    window.addEventListener("buhexpert-quota-reset", syncQuota);
-    return () => window.removeEventListener("buhexpert-quota-reset", syncQuota);
+    // H01 intentionally keeps the dialogue only for the lifetime of this page.
+    window.localStorage.removeItem("buhexpert_h01_chat_v1");
+    trackEvent("h01_variant_view", { query_category: "registration_answer_preview" });
   }, []);
 
-  const submit = async (value = question) => {
+  const sendQuestion = async (value: string, requestId = newRequestId()) => {
+    const normalized = value.trim();
+    if (loading || inFlight.current === requestId || normalized.length < 4) return;
+    inFlight.current = requestId;
+    setError(""); setRetry({ question: normalized, requestId }); setLoading(true);
+    setMessages((current) => current.some((item) => item.id === requestId) ? current : [...current, { id: requestId, role: "user", text: normalized }]);
+    const history = messages.map((item) => `${item.role === "user" ? "Пользователь" : "Ассистент"}: ${item.text}`);
+    try {
+      const response = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: normalized, idempotencyKey: requestId, history }) });
+      const data = await response.json();
+      if (response.status === 401) { onAuthRequired(); return; }
+      if (!response.ok) throw new Error(data.error || "Не удалось получить ответ.");
+      const answer = data as ChatResponse;
+      setMessages((current) => [...current.filter((item) => item.id !== `answer-${requestId}`), { id: `answer-${requestId}`, role: "assistant", text: answer.shortAnswer, answer }]);
+      setQuestion(""); setFollowUpQuestion(""); setDemoMode(answer.demoMode); setRetry(undefined);
+      trackEvent("h01_answer_view", { answer_confidence: answer.confidence });
+      if (!isAuthenticated) trackEvent("h01_registration_offer", { query_category: "answer_preview" });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось получить ответ. Попробуйте ещё раз.");
+      trackEvent("h01_answer_error");
+    } finally { setLoading(false); inFlight.current = null; }
+  };
+
+  const ask = (value = question) => {
     const normalized = value.trim();
     if (loading || normalized.length < 4) return;
-    if (remaining <= 0) { trackEvent("ai_free_limit_reached", { remaining_queries: 0 }); onSubscribe("free_limit"); return; }
-    setQuestion(normalized); setAsked(normalized); setAnswer(null); setError(""); setLoading(true);
-    trackEvent("ai_query_submit", { remaining_queries: remaining });
-    try {
-      const response = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: normalized }) });
-      const data = await response.json();
-      if (response.status === 429) { setRemaining(0); trackEvent("ai_free_limit_reached", { remaining_queries: 0 }); onSubscribe("free_limit"); return; }
-      if (!response.ok) throw new Error(data.error || "Не удалось получить ответ.");
-      setAnswer(data); setRemaining(data.remainingQueries); setDemoMode(data.demoMode);
-      trackEvent(data.insufficient ? "ai_no_answer" : "ai_answer_view", { remaining_queries: data.remainingQueries, answer_confidence: data.confidence });
-      trackEvent("ai_paywall_view", { remaining_queries: data.remainingQueries });
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось получить ответ. Попробуйте ещё раз."); }
-    finally { setLoading(false); }
+    setQuestion(normalized);
+    trackEvent("h01_question_submit", { query_category: isAuthenticated ? "authenticated" : "guest" });
+    void sendQuestion(normalized);
   };
-  const reset = () => { setAsked(""); setAnswer(null); setError(""); setQuestion(""); document.querySelector<HTMLInputElement>("#question")?.focus(); };
-  const keydown = (event: KeyboardEvent<HTMLInputElement>) => { if (event.key === "Enter") submit(); };
-  const resetLimit = async () => {
-    const response = await fetch("/api/chat", { method: "DELETE" });
-    if (!response.ok) return;
-    setRemaining(3); reset();
-    window.dispatchEvent(new CustomEvent("buhexpert-quota-reset", { detail: 3 }));
+  const askFollowUp = () => {
+    const normalized = followUpQuestion.trim();
+    if (loading || normalized.length < 4) return;
+    trackEvent("h01_question_submit", { query_category: "authenticated_followup" });
+    void sendQuestion(normalized);
   };
+  const keydown = (event: KeyboardEvent<HTMLInputElement>) => { if (event.key === "Enter") ask(); };
+  const followUpKeydown = (event: KeyboardEvent<HTMLInputElement>) => { if (event.key === "Enter") askFollowUp(); };
+  const clearHistory = () => { setMessages([]); setQuestion(""); setFollowUpQuestion(""); setError(""); setRetry(undefined); };
+  const lastAnswerId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
 
   return <section className="card ai" id="ai">
     <div className="ai-orbit" aria-hidden="true"><span>✦</span><span>✦</span><span>✦</span></div>
     <div className="ai-kicker"><span className="ai-kicker-dot" />БУХЭКСПЕРТ AI · ПОИСК ПО БАЗЕ ЗНАНИЙ</div>
-    <div className="ai-heading"><div><h1>Спросите — и получите готовое решение</h1>
-      <p className="lead">AI-помощник ищет по материалам БухЭксперта, объясняет логику учёта и находит нужную инструкцию в 1С.</p></div>
-      <div className="owl" aria-hidden="true">✦</div></div>
-    <div className="ask-shell">
-      <span className="ask-icon" aria-hidden="true">⌕</span>
-      <input id="question" value={question} maxLength={600} onChange={(e) => setQuestion(e.target.value)} onKeyDown={keydown} disabled={loading || remaining === 0} placeholder="Например: как отразить лизинг в 1С?" aria-label="Вопрос AI-помощнику" />
-      <button className="primary-btn ask-button" disabled={loading || question.trim().length < 4 || remaining === 0} onClick={() => submit()}>{loading ? "Ищу…" : <><span>Спросить AI</span><b>↗</b></>}</button>
-    </div>
-    <div className="chips">{suggestions.map((item) => <button className="chip" key={item} disabled={loading || remaining === 0} onClick={() => { setQuestion(item); submit(item); }}>{item}</button>)}</div>
-    <div className="ai-meta"><span>Осталось бесплатных вопросов: <b>{remaining}</b></span>{demoMode && <span className="demo-label">Демонстрационный режим</span>}
-      {remaining === 0 && <button className="reset-limit" onClick={resetLimit}>Сбросить 3 бесплатных вопроса</button>}</div>
-    <p className="fine">Ответ формируется по проверенной демонстрационной базе. AI-помощник может уточнить конфигурацию и версию 1С.</p>
-    {(asked || loading || error) && <div className="result show">{loading && <><div className="query"><span>?</span><div>{asked}</div></div><div className="loader show"><i className="spinner" />Ищу по материалам БухЭксперта…</div></>}
-      {error && <div className="error-state"><b>Не удалось получить ответ</b><p>{error}</p><button className="outline modal-button" onClick={() => submit(asked)}>Повторить запрос</button></div>}
-      {answer && <AiAnswer question={asked} answer={answer} onReset={reset} onSubscribe={() => onSubscribe("answer_paywall")} onConsult={() => onConsult("answer_paywall")} />}</div>}
-    {remaining === 0 && !answer && <div className="limit-state"><b>Бесплатные вопросы закончились</b><p>Откройте полный доступ, чтобы продолжить работу с AI-помощником, или сбросьте демонстрационный лимит.</p><div className="result-actions"><button className="primary-btn modal-button" onClick={() => onSubscribe("limit_inline")}>Открыть полный доступ</button><button className="secondary-link" onClick={resetLimit}>Сбросить 3 вопроса</button></div></div>}
+    <div className="ai-heading"><div><h1>Спросите — и получите готовое решение</h1><p className="lead">Получите краткий ответ, а после регистрации — полное объяснение и возможность уточнять ситуацию в диалоге.</p></div><div className="owl" aria-hidden="true">✦</div></div>
+    <p className="demo-note">{safetyNote}</p>
+    <div className="ask-shell"><span className="ask-icon" aria-hidden="true">⌕</span><input id="question" value={question} maxLength={600} onChange={(event) => setQuestion(event.target.value)} onKeyDown={keydown} disabled={loading} placeholder="Например: как отразить лизинг в 1С?" aria-label="Вопрос AI-помощнику" /><button type="button" className="primary-btn ask-button" disabled={loading || question.trim().length < 4} onClick={() => ask()}>{loading ? "Ищу…" : <><span>Получить ответ</span><b>↗</b></>}</button></div>
+    <div className="chips">{suggestions.map((item) => <button type="button" className="chip" key={item} disabled={loading} onClick={() => { setQuestion(item); ask(item); }}>{item}</button>)}</div>
+    <div className="ai-meta">{demoMode && <span className="demo-label">Тестовый режим</span>}{messages.length > 0 && <button type="button" className="clear-history" onClick={clearHistory}>Очистить историю</button>}</div>
+    {(messages.length > 0 || loading || error) && <div className="result show"><div className="chat-history">{messages.map((message, index) => message.role === "user" ? messages[index + 1]?.role === "assistant" ? null : <div className="query" key={message.id}><span>?</span><div>{message.text}</div></div> : message.answer ? <AiAnswer key={message.id} question={messages[index - 1]?.text || question} answer={message.answer} onSubscribe={() => onSubscribe("answer_paywall")} onConsult={() => onConsult("answer_consult")} showPaywall={false} showDisclaimer={message.id === lastAnswerId} preview={!isAuthenticated} onRegister={onAuthRequired} /> : null)}</div>{loading && <div className="loader show"><i className="spinner" />Формируем ответ…</div>}{error && <div className="error-state"><b>Не удалось получить ответ</b><p>{error}</p>{retry && <button type="button" className="outline modal-button" onClick={() => void sendQuestion(retry.question, retry.requestId)}>Повторить запрос</button>}</div>}{isAuthenticated && messages.some((item) => item.role === "assistant") && <div className="chat-followup"><input value={followUpQuestion} onChange={(event) => setFollowUpQuestion(event.target.value)} onKeyDown={followUpKeydown} disabled={loading} placeholder="Уточните вашу ситуацию" aria-label="Уточняющий вопрос" /><button type="button" className="primary-btn" disabled={loading || followUpQuestion.trim().length < 4} onClick={askFollowUp}>Уточнить</button></div>}</div>}
   </section>;
 }

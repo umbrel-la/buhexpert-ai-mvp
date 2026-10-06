@@ -1,7 +1,11 @@
 "use client";
 
 import type { ChatResponse } from "@/types";
-import { trackEvent } from "@/lib/analytics";
+
+function AnswerText({ text, preview = false }: { text: string; preview?: boolean }) {
+  const visibleText = preview && text.length > 420 ? `${text.slice(0, 420).trimEnd()}…` : text;
+  return <div className="short-answer">{visibleText.split(/\n{2,}/).map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 20)}`}>{paragraph}</p>)}</div>;
+}
 
 export function Paywall({ onSubscribe, onConsult }: { onSubscribe: () => void; onConsult: () => void }) {
   return <div className="locked-solution">
@@ -12,17 +16,15 @@ export function Paywall({ onSubscribe, onConsult }: { onSubscribe: () => void; o
   </div>;
 }
 
-export function AiAnswer({ question, answer, onReset, onSubscribe, onConsult }: { question: string; answer: ChatResponse; onReset: () => void; onSubscribe: () => void; onConsult: () => void }) {
+export function AiAnswer({ question, answer, onSubscribe, onConsult, showPaywall = true, showDisclaimer = true, preview = false, onRegister }: { question: string; answer: ChatResponse; onSubscribe: () => void; onConsult: () => void; showPaywall?: boolean; showDisclaimer?: boolean; preview?: boolean; onRegister?: () => void }) {
   return <div className="answer show">
     <div className="query"><span>?</span><div>{question}</div></div>
-    <h2>Краткий ответ</h2><p className="short-answer">{answer.shortAnswer}</p>{answer.explanation.map((text) => <p key={text}>{text}</p>)}
-    {answer.sources.length > 0 && <><h2>Найденные материалы</h2><div className="materials">{answer.sources.map((source) => <article className="material" key={source.id}>
-      <span className="tag">{source.category}</span><h3>{source.title}</h3><small>Обновлено: {new Date(source.updatedAt).toLocaleDateString("ru-RU")}</small><br />
-      <a className="text-link" href={source.url} target="_blank" rel="noopener noreferrer" onClick={() => trackEvent("ai_source_click", { source_id: source.id })}>Открыть материал →</a>
-    </article>)}</div></>}
-    {answer.stepsPreview.length > 0 && <><h2>Пошаговое решение в 1С</h2><ol className="steps">{answer.stepsPreview.map((step) => <li key={step}>{step}</li>)}</ol></>}
-    <p className="disclaimer">Демонстрационный ответ. Применимость рекомендаций необходимо проверить с учётом версии 1С и конкретной ситуации.</p>
-    <Paywall onSubscribe={onSubscribe} onConsult={onConsult} />
-    <button className="other" onClick={onReset}>Задать другой вопрос</button>
+    <div className="assistant-message">
+    <AnswerText text={answer.shortAnswer} preview={preview} />
+    {preview ? <><div className="locked-solution registration-lock"><div className="locked-preview" aria-hidden="true"><span>Продолжение ответа с пояснениями и действиями</span><span>Уточнения по вашей ситуации в диалоге</span></div><div className="paywall"><strong>Полный ответ уже готов</strong><p>Зарегистрируйтесь, чтобы открыть продолжение ответа и продолжить диалог с AI-помощником.</p><button type="button" className="primary-btn action-button" onClick={onRegister}>Зарегистрироваться и посмотреть ответ</button><p className="fine">Уже есть аккаунт? Войдите через кнопку в шапке.</p></div></div>{showDisclaimer && <p className="disclaimer">ИИ-помощник работает в тестовом режиме и может ошибаться. Перед применением проверяйте ответ по актуальным источникам; в сложных случаях уточните у эксперта.</p>}</> : <>
+    {showDisclaimer && <p className="disclaimer">ИИ-помощник работает в тестовом режиме и может ошибаться. Перед применением проверяйте ответ по актуальным источникам; в сложных случаях уточните у эксперта.</p>}
+    {showPaywall && <Paywall onSubscribe={onSubscribe} onConsult={onConsult} />}
+    </>}
+    </div>
   </div>;
 }
