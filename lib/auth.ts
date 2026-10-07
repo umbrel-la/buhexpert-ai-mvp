@@ -20,7 +20,7 @@ export async function getServerSession(request: NextRequest): Promise<ServerSess
   const sessionId = request.cookies.get(process.env.BUHEXPERT_SESSION_COOKIE || "buhexpert_session")?.value;
   if (!sessionId) return { authenticated: false, mode: "real" };
 
-  // TODO(auth): verify `sessionId` with the production auth provider and return its stable user id.
-  // Do not replace this with a client-side localStorage check.
-  return { authenticated: true, userId: "provider-session", mode: "real" };
+  // TODO(auth): verify `sessionId` with the production provider and return its stable user id.
+  // A cookie existing on its own is never proof of authentication.
+  return { authenticated: false, mode: "real" };
 }

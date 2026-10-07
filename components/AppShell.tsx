@@ -19,13 +19,14 @@ export function AppShell() {
   }, []);
   const subscribe = (location: string) => { trackEvent("ai_subscription_click", { button_location: location }); setModal("subscription"); };
   const consult = (location: string) => { trackEvent("ai_consultation_click", { button_location: location }); setModal("consultation"); };
-  const openRegister = () => { trackEvent("h01_registration_start", { query_category: "register" }); setAuthModal("register"); };
+  const openRegister = () => { trackDemoEvent("h01_demo_registration_start"); setAuthModal("register"); };
   const openLogin = () => { setAuthModal("login"); };
   const authenticatedCallback = (kind: "login" | "register") => {
     setAuthenticated(true); setAuthModal(null);
     if (kind === "register") trackDemoEvent("h01_demo_registration_complete");
-    else { trackDemoEvent("h01_demo_existing_login_complete"); trackEvent("h01_existing_login"); }
+    else trackDemoEvent("h01_demo_existing_login_complete");
     if (kind === "register") trackDemoEvent("h01_demo_registration_success");
+    trackDemoEvent("h01_demo_chat_return");
   };
   return <>
     <Header onSubscribe={subscribe} onLogin={openLogin} onRegister={openRegister} />

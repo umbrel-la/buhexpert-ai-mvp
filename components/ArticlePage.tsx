@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, useEffect, useState } from "react";
+import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type { ChatResponse } from "@/types";
@@ -21,7 +21,9 @@ function ArticleAi({ compact, initialQuestion, onSubscribe, onConsult }: { compa
   const [remaining, setRemaining] = useState(3);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const conversationId = useRef("");
   useEffect(() => {
+    conversationId.current = crypto.randomUUID();
     trackEvent("article_ai_widget_view", { article_slug: slug });
     fetch("/api/chat").then((r) => r.json()).then((d) => setRemaining(d.remainingQueries)).catch(() => {});
     const syncQuota = (event: Event) => setRemaining((event as CustomEvent<number>).detail ?? 3);
@@ -39,7 +41,7 @@ function ArticleAi({ compact, initialQuestion, onSubscribe, onConsult }: { compa
     setAsked(normalized); setQuestion(normalized); setLoading(true); setError(""); setAnswer(null);
     trackEvent("article_ai_question_submit", { article_slug: slug, remaining_queries: remaining });
     try {
-      const response = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: normalized }) });
+      const response = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: normalized, idempotencyKey: `${slug}-${Date.now()}-${Math.random()}`, conversationId: conversationId.current, history: [] }) });
       const data = await response.json();
       if (response.status === 429) { setRemaining(0); onSubscribe("article_limit"); return; }
       if (!response.ok) throw new Error(data.error || "Не удалось получить ответ.");

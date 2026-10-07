@@ -34,6 +34,11 @@ export interface ChatResponse {
   insufficient?: boolean;
 }
 
+export type ChatTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";

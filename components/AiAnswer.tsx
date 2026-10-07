@@ -3,7 +3,8 @@
 import type { ChatResponse } from "@/types";
 
 function AnswerText({ text, preview = false }: { text: string; preview?: boolean }) {
-  const visibleText = preview && text.length > 420 ? `${text.slice(0, 420).trimEnd()}…` : text;
+  const sentences = text.match(/[^.!?…]+[.!?…]+/g)?.map((item) => item.trim()).filter(Boolean) || [];
+  const visibleText = preview ? (sentences.slice(0, 2).join(" ") || text.split(/\n+/).find(Boolean)?.trim() || text) : text;
   return <div className="short-answer">{visibleText.split(/\n{2,}/).map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 20)}`}>{paragraph}</p>)}</div>;
 }
 
